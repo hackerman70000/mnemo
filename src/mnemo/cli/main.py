@@ -10,6 +10,7 @@ from mnemo.datasets.loaders import load_local
 from mnemo.detectors import DETECTOR_REGISTRY
 from mnemo.models.hf import HFModel
 from mnemo.pipelines.auc_eval import evaluate_auc
+from mnemo.pipelines.dataset_inference import dataset_inference
 from mnemo.pipelines.detection import detect_contamination
 
 app = typer.Typer(help="mnemo — LLM training data contamination detection.", no_args_is_help=True)
@@ -94,6 +95,48 @@ def auc(
     typer.echo("  Unseen:")
     for n, r in report.unseen.items():
         typer.echo(f"    {n}: {r.score:.4f}")
+
+
+@app.command()
+def di(
+    model_name: str = typer.Argument(..., help="HuggingFace model identifier."),
+    suspect: str = typer.Option(..., "--suspect", help="Suspect dataset (path or benchmark)."),
+    validation: str = typer.Option(..., "--validation", help="Validation dataset (held-out IID)."),
+    detectors: list[str] = typer.Option(
+        ["vanilla_loss", "perplexity", "min_k_prob", "max_k_prob", "zlib_ratio"],
+        "--detector",
+        "-d",
+        help="Detectors to aggregate. Pass --detector multiple times.",
+    ),
+    n_seeds: int = typer.Option(10, "--seeds"),
+    holdout: int = typer.Option(1000, "--holdout"),
+    threshold: float = typer.Option(0.1, "--threshold"),
+    device: str = typer.Option("auto"),
+) -> None:
+    """Maini-style dataset inference: was the suspect set used for training?"""
+    sus = _resolve_dataset(suspect)
+    val = _resolve_dataset(validation)
+    dets = [_build_detector(d) for d in detectors]
+    model = HFModel(model_name, device=device)
+
+    result = dataset_inference(
+        model,
+        sus,
+        val,
+        dets,  # type: ignore[arg-type]
+        n_seeds=n_seeds,
+        holdout_size=holdout,
+        threshold=threshold,
+    )
+    verdict = "TRAINED" if result.trained else "NOT trained"
+    typer.secho(
+        f"\n{model_name} on {suspect}: {verdict} (p_combined = {result.p_combined:.4g})",
+        fg=typer.colors.RED if result.trained else typer.colors.GREEN,
+    )
+    typer.echo(f"  per-seed p-values: {[f'{p:.3g}' for p in result.p_values]}")
+    typer.echo("  detector weights:")
+    for name, w in sorted(result.feature_weights.items(), key=lambda x: -abs(x[1])):
+        typer.echo(f"    {name}: {w:+.4f}")
 
 
 @app.command(name="list-detectors")

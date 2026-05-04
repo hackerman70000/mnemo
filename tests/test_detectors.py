@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from mnemo.detectors import CoDeC, MinKProb, VanillaLoss, ZlibRatio
+from mnemo.detectors import CoDeC, MaxKProb, MinKProb, Perplexity, VanillaLoss, ZlibRatio
 from tests.conftest import FakeModel
 
 
@@ -23,6 +23,27 @@ def test_min_k_rejects_invalid_percent():
         MinKProb(k_percent=0)
     with pytest.raises(ValueError, match="k_percent"):
         MinKProb(k_percent=150)
+
+
+def test_max_k_picks_highest_tokens():
+    model = FakeModel("var", lambda _t: np.array([-0.1, -0.5, -2.0, -3.0, -5.0]))
+    score = MaxKProb(k_percent=40).score_sample("a b c d e", model)
+    assert score == pytest.approx(np.mean([-0.1, -0.5]))
+
+
+def test_max_k_rejects_invalid_percent():
+    with pytest.raises(ValueError, match="k_percent"):
+        MaxKProb(k_percent=0)
+
+
+def test_perplexity_returns_negative_exp_loss(constant_model):
+    score = Perplexity().score_sample("alpha beta gamma", constant_model)
+    assert score == pytest.approx(-np.exp(2.0))
+
+
+def test_perplexity_handles_empty_logprobs():
+    model = FakeModel("empty", lambda _t: np.array([]))
+    assert Perplexity().score_sample("anything", model) == 0.0
 
 
 def test_zlib_returns_negative_signal_for_real_text(constant_model):

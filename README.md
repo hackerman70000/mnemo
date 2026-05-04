@@ -1,8 +1,9 @@
 # mnemo
 
-LLM training-data contamination detection toolkit. Implements **CoDeC**
-(Contamination Detection via Context, Zawalski et al. 2025) plus three
-common baselines behind a unified interface.
+LLM training-data contamination detection toolkit. Implements CoDeC
+(Contamination Detection via Context, Zawalski et al. 2025) plus
+multiple membership-inference baselines and Maini-style dataset
+inference (NeurIPS 2024) behind a unified interface.
 
 ## Why
 
@@ -37,20 +38,25 @@ mnemo detect EleutherAI/pythia-410m gsm8k --detector codec
 mnemo auc EleutherAI/pythia-410m \
     --seen pile_wikipedia --seen pile_github \
     --unseen gsm8k --unseen gpqa
+mnemo di EleutherAI/pythia-410m \
+    --suspect path/to/suspect.pkl \
+    --validation path/to/validation.pkl
 mnemo list-detectors
 mnemo list-benchmarks
 ```
 
 ## Detectors
 
-All detectors return per-sample scores where **higher = more likely
-contaminated**. Aggregation is mean over samples.
+All detectors return per-sample scores where higher = more likely
+contaminated. Aggregation is mean over samples.
 
 | Detector       | Class           | Reference                       |
 |----------------|-----------------|---------------------------------|
 | CoDeC          | `CoDeC`         | Zawalski et al. 2025            |
 | Vanilla Loss   | `VanillaLoss`   | Fu et al. 2024                  |
+| Perplexity     | `Perplexity`    | (transform of vanilla loss)     |
 | Min-K% Prob    | `MinKProb`      | Zhang 2021b / Shi 2024          |
+| Max-K% Prob    | `MaxKProb`      | Mirror of Min-K%                |
 | Zlib Ratio     | `ZlibRatio`     | Carlini et al. 2022             |
 
 Add your own: subclass `Detector`, implement `score_sample`, register in
@@ -59,8 +65,9 @@ Add your own: subclass `Detector`, implement `score_sample`, register in
 ## Pipelines
 
 * `detect_contamination` — single detector × model × dataset.
-* `evaluate_auc` — paper Tab. 1: dataset-level AUC over seen vs. unseen.
-* `finetune_probe` — paper Sec. 3.3: short finetune, track score curve.
+* `evaluate_auc` — CoDeC paper Tab. 1: dataset-level AUC over seen vs. unseen.
+* `finetune_probe` — CoDeC paper §3.3: short finetune, track score curve.
+* `dataset_inference` — Maini et al. 2024: aggregate multiple MIAs through a linear regressor and run a t-test for "was this dataset trained on?".
 
 ## Layout
 
@@ -92,6 +99,7 @@ CI runs all of the above on push.
 ## References
 
 * Zawalski et al. 2025. *Detecting Data Contamination in LLMs via In-Context Learning.*  arXiv:2510.27055
+* Maini et al. 2024. *LLM Dataset Inference: Did you train on my dataset?* NeurIPS 2024
 * Fu et al. 2024. *Does Data Contamination Detection Work (Well) for LLMs?*
 * Shi et al. 2024. *Detecting Pretraining Data from Large Language Models.*
 * Zhang et al. 2021. *Counterfactual Memorization in Neural Language Models.*

@@ -61,6 +61,69 @@ to have unusually high log-prob even on their hardest tokens.
 compressibility — guards against rewarding samples that are simply easy
 to predict (highly redundant text).
 
+### Max-K% Prob
+
+Mirror of Min-K%: average of the *top* K% token log-probabilities.
+Probes how confident the model is on the easiest tokens. Weak alone but
+provides an independent feature for the Dataset Inference aggregator.
+
+### Perplexity
+
+`-exp(-mean(logprob))`. Monotonic transform of vanilla loss but
+differently scaled — useful as a separate feature for the linear
+regressor in §Dataset Inference.
+
+## Dataset Inference (Maini et al., 2024)
+
+**Paper.** Maini, Jia, Papernot, Dziedzic. *LLM Dataset Inference: Did
+you train on my dataset?* NeurIPS 2024.
+
+**Why.** Sample-level membership inference on LLMs is brittle — Maini
+et al. show prior MIA "successes" (e.g. Min-K% on WikiMIA) detect
+*temporal distribution shift*, not membership. On IID Pile train/val
+splits all standard MIAs collapse to AUC ≈ 0.5. The fix is statistical
+aggregation at the *dataset* level.
+
+**Setup.** Two corpora from the same distribution: `suspect` (claimed
+to have been trained on) and `validation` (held-out, private). Run a
+suite of MIA detectors on both; train a linear regressor (suspect=0,
+val=1) on half; t-test the regressor's predictions on the other half.
+
+**Pipeline (§5.1).**
+
+1. Split each corpus into A/B partitions (different random seed each
+   run for the Šidák combination).
+2. Score every sample of each A-partition with every detector → feature
+   matrix.
+3. Clip top/bottom 2.5% of each feature column to the column mean
+   (anti-skew, paper §5.1.iii).
+4. Z-score normalise; fit `LinearRegression` mapping features → label.
+5. Apply the same transform on the held-out B-partitions, predict
+   scores, run a one-sided Welch's t-test:
+
+   ```
+   H_0: mu(suspect) >= mu(val)   (not trained)
+   H_1: mu(suspect) <  mu(val)   (trained)
+   ```
+
+6. Repeat for `n_seeds` runs; combine the resulting p-values via
+   Šidák (Maini eq. 2):
+
+   ```
+   p_combined = 1 - exp(sum(log(1 - p_i)))
+   ```
+
+**Decision.** `p_combined < 0.1` ⇒ statistically significant evidence
+the suspect set was used in training. Maini reports
+`p < 10⁻³⁰` on Pythia × Pile subsets and zero false positives when
+comparing two validation halves.
+
+**Assumptions.**
+
+* Suspect and validation must be IID — same distribution, same era.
+* Validation must be private to the victim.
+* Gray-box access to per-token log-probabilities is required.
+
 ## Dataset-level AUC
 
 Mirrors paper Tab. 1: per-dataset CoDeC scores are treated as scalar

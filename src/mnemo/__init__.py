@@ -7,6 +7,8 @@ from mnemo.detectors import (
     MaxKProb,
     MinKProb,
     Perplexity,
+    PerturbationLoss,
+    ReferenceLoss,
     VanillaLoss,
     ZlibRatio,
 )
@@ -30,6 +32,8 @@ __all__ = [
     "MaxKProb",
     "MinKProb",
     "Perplexity",
+    "PerturbationLoss",
+    "ReferenceLoss",
     "VanillaLoss",
     "ZlibRatio",
     "dataset_inference",

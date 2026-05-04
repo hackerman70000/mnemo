@@ -50,14 +50,21 @@ mnemo list-benchmarks
 All detectors return per-sample scores where higher = more likely
 contaminated. Aggregation is mean over samples.
 
-| Detector       | Class           | Reference                       |
-|----------------|-----------------|---------------------------------|
-| CoDeC          | `CoDeC`         | Zawalski et al. 2025            |
-| Vanilla Loss   | `VanillaLoss`   | Fu et al. 2024                  |
-| Perplexity     | `Perplexity`    | (transform of vanilla loss)     |
-| Min-K% Prob    | `MinKProb`      | Zhang 2021b / Shi 2024          |
-| Max-K% Prob    | `MaxKProb`      | Mirror of Min-K%                |
-| Zlib Ratio     | `ZlibRatio`     | Carlini et al. 2022             |
+| Detector          | Class             | Reference                       |
+|-------------------|-------------------|---------------------------------|
+| CoDeC             | `CoDeC`           | Zawalski et al. 2025            |
+| Vanilla Loss      | `VanillaLoss`     | Fu et al. 2024                  |
+| Perplexity        | `Perplexity`      | (transform of vanilla loss)     |
+| Min-K% Prob       | `MinKProb`        | Zhang 2021b / Shi 2024          |
+| Max-K% Prob       | `MaxKProb`        | Mirror of Min-K%                |
+| Zlib Ratio        | `ZlibRatio`       | Carlini et al. 2022             |
+| Perturbation Loss | `PerturbationLoss`| Mitchell et al. 2023 (DetectGPT)|
+| Reference Loss    | `ReferenceLoss`   | Maini et al. 2024 §2.1          |
+
+`PerturbationLoss` and `ReferenceLoss` need constructor arguments (a
+perturbation callable / a reference model) and are intentionally absent
+from the default-constructible CLI registry — instantiate them via the
+Python API.
 
 Add your own: subclass `Detector`, implement `score_sample`, register in
 `src/mnemo/detectors/__init__.py`.

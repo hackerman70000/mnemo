@@ -73,6 +73,33 @@ provides an independent feature for the Dataset Inference aggregator.
 differently scaled — useful as a separate feature for the linear
 regressor in §Dataset Inference.
 
+### Perturbation Loss (Mitchell et al. 2023, DetectGPT)
+
+Perturb the sample `n` times via a `perturbation_fn` (T5 mask-fill in
+the original paper, or cheap CPU stand-ins like adjacent word swap /
+random word drop) and score by
+
+```
+score = mean(logprob(sample)) - mean over k of mean(logprob(perturbed_k))
+```
+
+Memorised inputs sit near a local maximum of the model's log-probability
+surface, so perturbations consistently move the score downward; unseen
+text is roughly flat under perturbation.
+
+### Reference Loss (Maini et al. 2024)
+
+Compare the suspect model's per-token log-probability against a small
+reference model (Phi-1.5, Tinystories, SILO). The suspect's edge over
+the reference shrinks for non-members:
+
+```
+score = mean(suspect_logprob) - mean(reference_logprob)
+```
+
+Both detectors plug into `dataset_inference` — they expand the feature
+space available to the linear regressor in stage 2.
+
 ## Dataset Inference (Maini et al., 2024)
 
 **Paper.** Maini, Jia, Papernot, Dziedzic. *LLM Dataset Inference: Did

@@ -45,6 +45,21 @@ mnemo list-detectors
 mnemo list-benchmarks
 ```
 
+## Reproduction
+
+Ran `experiments/reproduce_pythia.py` on Pythia-410M (CUDA, fp16,
+1000 samples per dataset; GPQA-diamond capped at 198):
+
+| Dataset        | this repo | paper notebook | status      |
+|----------------|-----------|----------------|-------------|
+| pile_wikipedia | 0.968     | 0.949          | seen        |
+| pile_github    | 0.885     | 0.897          | seen        |
+| gsm8k          | 0.059     | 0.063          | unseen      |
+| gpqa-diamond   | 0.394     | 0.424          | unseen, diverse (paper §3.5 caveat) |
+
+All four within ~3% of the published numbers — clean separation between
+the Pile (training corpus) and post-cutoff benchmarks.
+
 ## Detectors
 
 All detectors return per-sample scores where higher = more likely

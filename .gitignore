@@ -43,5 +43,3 @@ wandb/
 .cache/
 data/
 !data/.gitkeep
-
-uv.lock

@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "LLM training data contamination detection toolkit"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
 authors = [{ name = "Bartlomiej Dmitruk", email = "bartlomiej.dmitruk@isec.pl" }]
 keywords = ["llm", "contamination", "memorization", "evaluation", "membership-inference"]
 

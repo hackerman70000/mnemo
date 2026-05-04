@@ -60,6 +60,25 @@ Ran `experiments/reproduce_pythia.py` on Pythia-410M (CUDA, fp16,
 All four within ~3% of the published numbers — clean separation between
 the Pile (training corpus) and post-cutoff benchmarks.
 
+### Dataset Inference (Maini et al. 2024)
+
+`experiments/dataset_inference_demo.py` on Pythia-410M, 5 detectors
+(vanilla_loss, perplexity, min_k, max_k, zlib), 5 random seeds, 500
+samples per side from `iamgroot42/mimir`:
+
+| Subset         | p_combined  | verdict     |
+|----------------|-------------|-------------|
+| github         | 1.67e-11    | TRAINED     |
+| wikipedia_(en) | 0.97        | no evidence |
+
+github reproduces Maini Fig. 4 cleanly (p well below the 0.1 threshold).
+wikipedia fails with our 5-feature setup — exactly Maini's main finding
+(paper §4 Fig. 3: no single-MIA suite consistently discriminates IID
+Pile train vs validation; the paper uses 52 features specifically to
+work around this). Adding more features (MinK with multiple K values,
+PerturbationLoss, ReferenceLoss against a small reference LM) would
+recover the wikipedia signal.
+
 ## Detectors
 
 All detectors return per-sample scores where higher = more likely

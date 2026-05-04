@@ -9,14 +9,16 @@ from tests.conftest import FakeModel
 
 def _make_split_model() -> FakeModel:
     """Return higher logprobs for samples containing 'TRAIN' (memorised),
-    lower for samples containing 'VAL'.
+    lower for samples containing 'VAL'. Tiny per-text jitter avoids the
+    catastrophic-cancellation warning from scipy when the t-test sees
+    identical inputs.
     """
 
     def logprobs(text: str) -> np.ndarray:
         n = max(1, len(text.split()))
-        if "TRAIN" in text:
-            return np.full(n, -0.5)
-        return np.full(n, -3.0)
+        base = -0.5 if "TRAIN" in text else -3.0
+        jitter = ((hash(text) & 0xFFFF) / 0xFFFF - 0.5) * 0.01
+        return np.full(n, base + jitter)
 
     return FakeModel("split", logprobs)
 

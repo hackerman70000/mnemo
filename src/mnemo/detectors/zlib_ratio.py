@@ -28,10 +28,12 @@ class ZlibRatio(Detector):
         model: ModelBackend,
         context: list[str] | None = None,
     ) -> float:
-        logprobs = model.token_logprobs(sample)
+        del context
+        return self.from_logprobs(model.token_logprobs(sample), sample)
+
+    def from_logprobs(self, logprobs: np.ndarray, sample: str = "") -> float:
         if logprobs.size == 0:
             return 0.0
-
         loss = -float(np.mean(logprobs))
         encoded = sample.encode("utf-8")
         if not encoded:

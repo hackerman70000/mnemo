@@ -28,6 +28,7 @@ dev = [
     "mypy>=1.10",
     "pre-commit>=3.7",
 ]
+plotting = ["matplotlib>=3.7"]
 
 [project.scripts]
 mnemo = "mnemo.cli.main:app"
@@ -52,6 +53,7 @@ ignore = ["PLR0913", "PLR2004"]
 "tests/*" = ["PLR2004", "PLC0415"]
 "experiments/*" = ["T201"]
 "src/mnemo/cli/*" = ["B008"]
+"src/mnemo/utils/plotting.py" = ["PLC0415"]
 
 [tool.mypy]
 python_version = "3.11"

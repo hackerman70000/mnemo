@@ -23,7 +23,7 @@ def mmlu_test() -> list[str]:
 
 
 def pile_subset(subset: str = "wikipedia_(en)") -> list[str]:
-    ds = load_dataset("iamgroot42/mimir", subset, split="ngram_13_0.8")
+    ds = load_dataset("iamgroot42/mimir", subset, split="ngram_13_0.8", trust_remote_code=True)
     return list(ds["member"])
 
 

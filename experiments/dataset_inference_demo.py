@@ -13,14 +13,13 @@ from __future__ import annotations
 from datasets import load_dataset
 from loguru import logger
 
-from mnemo.datasets.benchmarks import pile_subset
 from mnemo.detectors import MaxKProb, MinKProb, Perplexity, VanillaLoss, ZlibRatio
 from mnemo.models.hf import HFModel
 from mnemo.pipelines.dataset_inference import dataset_inference
 
 
 def _load_member_and_nonmember(subset: str) -> tuple[list[str], list[str]]:
-    ds = load_dataset("iamgroot42/mimir", subset, split="ngram_13_0.8")
+    ds = load_dataset("iamgroot42/mimir", subset, split="ngram_13_0.8", trust_remote_code=True)
     return list(ds["member"]), list(ds["nonmember"])
 
 
@@ -30,8 +29,7 @@ def main() -> None:
 
     for subset in ("wikipedia_(en)", "github"):
         logger.info(f"=== {subset} ===")
-        suspect, _ = _load_member_and_nonmember(subset)
-        validation = pile_subset(subset)[len(suspect) // 2 :]
+        suspect, validation = _load_member_and_nonmember(subset)
 
         result = dataset_inference(
             model,

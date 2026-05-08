@@ -42,6 +42,9 @@ def test_dataset_inference_detects_membership():
     assert result.trained is True
     assert set(result.detectors) == {"vanilla_loss", "perplexity", "min_k_prob", "max_k_prob"}
     assert len(result.p_values) == 3
+    assert len(result.p_value_curves) == 3
+    # Each curve should have 16 entries (the _P_SAMPLE_LIST sizes)
+    assert len(result.p_value_curves[0]) == 16
 
 
 def test_dataset_inference_no_false_positive_when_iid():
@@ -87,3 +90,82 @@ def test_dataset_inference_returns_per_detector_weights():
     assert set(result.feature_weights.keys()) == {"vanilla_loss", "perplexity"}
     for w in result.feature_weights.values():
         assert isinstance(w, float)
+
+
+def test_dataset_inference_train_normalize_mode():
+    model = _make_split_model()
+    suspect = [f"TRAIN {i}" for i in range(60)]
+    validation = [f"VAL {i}" for i in range(60)]
+
+    result = dataset_inference(
+        model,
+        suspect,
+        validation,
+        [VanillaLoss()],
+        n_seeds=2,
+        holdout_size=40,
+        normalize_mode="train",
+        progress=False,
+    )
+    assert result.trained is True
+
+
+def test_dataset_inference_combined_normalize_mode():
+    model = _make_split_model()
+    suspect = [f"TRAIN {i}" for i in range(60)]
+    validation = [f"VAL {i}" for i in range(60)]
+
+    result = dataset_inference(
+        model,
+        suspect,
+        validation,
+        [VanillaLoss()],
+        n_seeds=2,
+        holdout_size=40,
+        normalize_mode="combined",
+        progress=False,
+    )
+    assert result.trained is True
+
+
+def test_dataset_inference_rejects_bad_normalize_mode():
+    model = _make_split_model()
+    with np.testing.assert_raises(ValueError):
+        dataset_inference(
+            model,
+            ["a"],
+            ["b"],
+            [VanillaLoss()],
+            normalize_mode="invalid",
+            progress=False,
+        )
+
+
+def test_dataset_inference_single_seed():
+    model = _make_split_model()
+    suspect = [f"TRAIN {i}" for i in range(60)]
+    validation = [f"VAL {i}" for i in range(60)]
+
+    result = dataset_inference(
+        model,
+        suspect,
+        validation,
+        [VanillaLoss()],
+        n_seeds=1,
+        holdout_size=40,
+        progress=False,
+    )
+    assert len(result.p_values) == 1
+    assert len(result.p_value_curves) == 1
+
+
+def test_dataset_inference_rejects_empty_detectors():
+    model = _make_split_model()
+    with np.testing.assert_raises(ValueError):
+        dataset_inference(model, ["a"], ["b"], [], progress=False)
+
+
+def test_dataset_inference_rejects_too_few_samples():
+    model = _make_split_model()
+    with np.testing.assert_raises(ValueError):
+        dataset_inference(model, ["a"], ["b"], [VanillaLoss()], progress=False)

@@ -6,7 +6,12 @@ from mnemo.detectors.perplexity import Perplexity
 from mnemo.detectors.perturbation_loss import (
     PerturbationLoss,
     adjacent_word_swap,
+    butter_fingers,
+    change_char_case,
     random_word_drop,
+    synonym_substitution,
+    underscore_trick,
+    whitespace_perturbation,
 )
 from mnemo.detectors.reference_loss import ReferenceLoss
 from mnemo.detectors.vanilla_loss import VanillaLoss
@@ -38,5 +43,10 @@ __all__ = [
     "VanillaLoss",
     "ZlibRatio",
     "adjacent_word_swap",
+    "butter_fingers",
+    "change_char_case",
     "random_word_drop",
+    "synonym_substitution",
+    "underscore_trick",
+    "whitespace_perturbation",
 ]

@@ -8,31 +8,52 @@ from tests.conftest import FakeModel
 
 
 def test_reference_loss_positive_when_suspect_more_confident():
-    suspect = FakeModel("suspect", lambda text: np.full(max(1, len(text.split())), -1.0))
-    reference = FakeModel("reference", lambda text: np.full(max(1, len(text.split())), -3.0))
-
-    detector = ReferenceLoss(reference_model=reference)
-    score = detector.score_sample("alpha beta gamma", suspect)
-    assert score == pytest.approx(2.0)
+    suspect = FakeModel("suspect", lambda _t: np.array([-0.5, -0.5]))
+    reference = FakeModel("ref", lambda _t: np.array([-3.0, -3.0]))
+    det = ReferenceLoss(reference_model=reference)
+    score = det.score_sample("foo", suspect)
+    assert score == pytest.approx(2.5)
 
 
 def test_reference_loss_negative_when_reference_more_confident():
-    suspect = FakeModel("suspect", lambda text: np.full(max(1, len(text.split())), -3.0))
-    reference = FakeModel("reference", lambda text: np.full(max(1, len(text.split())), -1.0))
+    suspect = FakeModel("suspect", lambda _t: np.array([-3.0, -3.0]))
+    reference = FakeModel("ref", lambda _t: np.array([-0.5, -0.5]))
+    det = ReferenceLoss(reference_model=reference)
+    score = det.score_sample("foo", suspect)
+    assert score == pytest.approx(-2.5)
 
-    detector = ReferenceLoss(reference_model=reference)
-    score = detector.score_sample("alpha beta gamma", suspect)
-    assert score == pytest.approx(-2.0)
 
-
-def test_reference_loss_zero_when_both_models_agree(constant_model):
-    detector = ReferenceLoss(reference_model=constant_model)
-    score = detector.score_sample("alpha beta gamma", constant_model)
+def test_reference_loss_zero_when_both_models_agree():
+    model = FakeModel("same", lambda _t: np.array([-1.0, -2.0]))
+    det = ReferenceLoss(reference_model=model)
+    score = det.score_sample("foo", model)
     assert score == pytest.approx(0.0)
 
 
 def test_reference_loss_handles_empty_logprobs():
-    suspect = FakeModel("suspect", lambda _t: np.array([]))
-    reference = FakeModel("reference", lambda _t: np.array([-1.0, -1.0]))
-    detector = ReferenceLoss(reference_model=reference)
-    assert detector.score_sample("anything", suspect) == 0.0
+    empty = FakeModel("empty", lambda _t: np.array([]))
+    det = ReferenceLoss(reference_model=empty)
+    score = det.score_sample("foo", empty)
+    assert score == 0.0
+
+
+def test_reference_loss_ratio_mode():
+    suspect = FakeModel("suspect", lambda _t: np.array([-0.5, -0.5]))
+    reference = FakeModel("ref", lambda _t: np.array([-2.0, -2.0]))
+    det = ReferenceLoss(reference_model=reference, mode="ratio")
+    score = det.score_sample("foo", suspect)
+    # (-0.5) / (-2.0) = 0.25
+    assert score == pytest.approx(0.25)
+
+
+def test_reference_loss_ratio_mode_guard_division_by_zero():
+    suspect = FakeModel("suspect", lambda _t: np.array([-1.0, -1.0]))
+    zero = FakeModel("zero", lambda _t: np.array([0.0, 0.0]))
+    det = ReferenceLoss(reference_model=zero, mode="ratio")
+    score = det.score_sample("foo", suspect)
+    assert score == 0.0
+
+
+def test_reference_loss_rejects_invalid_mode():
+    with pytest.raises(ValueError, match="mode"):
+        ReferenceLoss(reference_model=FakeModel("x", lambda _t: np.array([-1.0])), mode="invalid")

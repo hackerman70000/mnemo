@@ -14,8 +14,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
+import torch
 from loguru import logger
-from sklearn.linear_model import LinearRegression
+from torch import nn
 from tqdm.auto import tqdm
 
 from mnemo.core.detector import Detector
@@ -26,6 +27,8 @@ from mnemo.core.statistics import (
 )
 from mnemo.models.base import ModelBackend
 
+_P_SAMPLE_LIST = [2, 5, 10, 20, 50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+
 
 @dataclass
 class DatasetInferenceResult:
@@ -35,6 +38,7 @@ class DatasetInferenceResult:
     validation_size: int
     p_values: list[float]
     p_combined: float
+    p_value_curves: list[list[float]] = field(default_factory=list)
     feature_weights: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, object] = field(default_factory=dict)
 
@@ -47,6 +51,7 @@ class DatasetInferenceResult:
             "model": self.model,
             "p_combined": self.p_combined,
             "p_values": self.p_values,
+            "p_value_curves": self.p_value_curves,
             "trained": self.trained,
             "feature_weights": self.feature_weights,
             "suspect_size": self.suspect_size,
@@ -81,9 +86,22 @@ def _score_corpus(
     return features
 
 
-def _normalize_columns(arr: np.ndarray, ref: np.ndarray | None = None) -> np.ndarray:
-    """Z-score normalisation; if `ref` is provided, use its per-column stats."""
+def _normalize_columns(
+    arr: np.ndarray,
+    ref: np.ndarray | None = None,
+    *,
+    suspect_only: bool = False,
+    n_suspect: int | None = None,
+) -> np.ndarray:
+    """Z-score normalisation.
+
+    If `suspect_only` is True and `n_suspect` is provided, use only the
+    first *n_suspect* rows of `ref` (or `arr`) to compute stats. This
+    matches the paper's "train" normalization mode.
+    """
     base = ref if ref is not None else arr
+    if suspect_only and n_suspect is not None and n_suspect > 0:
+        base = base[:n_suspect]
     mu = base.mean(axis=0, keepdims=True)
     sigma = base.std(axis=0, keepdims=True)
     sigma = np.where(sigma < 1e-12, 1.0, sigma)
@@ -96,6 +114,65 @@ def _clean_features(arr: np.ndarray, fraction: float = 0.025) -> np.ndarray:
     )
 
 
+def _train_logistic_regressor(
+    x: np.ndarray,
+    y: np.ndarray,
+    num_epochs: int = 1000,
+    lr: float = 0.01,
+) -> tuple[np.ndarray, float]:
+    """Train a single-layer logistic regressor with BCE loss (Maini §5.1).
+
+    Returns the learnt coefficient vector and intercept so that predictions
+    are raw logits: ``scores = x @ coef + intercept``.
+    """
+    n_features = x.shape[1]
+    model = nn.Linear(n_features, 1)
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    x_t = torch.tensor(x, dtype=torch.float32)
+    y_t = torch.tensor(y, dtype=torch.float32)
+
+    for _ in range(num_epochs):
+        optimizer.zero_grad()
+        outputs = model(x_t).squeeze()
+        loss = criterion(outputs, y_t)
+        loss.backward()
+        optimizer.step()
+
+    with torch.no_grad():
+        coef = np.atleast_1d(model.weight.data.squeeze().numpy())
+        intercept = float(model.bias.data.item())
+
+    return coef, intercept
+
+
+def _p_value_curve(
+    suspect_scores: np.ndarray,
+    val_scores: np.ndarray,
+    sample_sizes: list[int] | None = None,
+) -> list[float]:
+    """Compute one-sided t-test p-values at multiple sample sizes.
+
+    Mirrors ``get_p_value_list`` in the reference implementation.
+    """
+    if sample_sizes is None:
+        sample_sizes = _P_SAMPLE_LIST
+    curve: list[float] = []
+    for n in sample_sizes:
+        n_sus = min(n, len(suspect_scores))
+        n_val = min(n, len(val_scores))
+        if n_sus < 2 or n_val < 2:
+            curve.append(1.0)
+            continue
+        p = one_sided_t_test_lower(
+            suspect_scores[:n_sus],  # type: ignore[arg-type]
+            val_scores[:n_val],  # type: ignore[arg-type]
+        )
+        curve.append(p)
+    return curve
+
+
 def dataset_inference(
     model: ModelBackend,
     suspect: Sequence[str],
@@ -106,6 +183,7 @@ def dataset_inference(
     holdout_size: int = 1000,
     train_fraction: float = 0.5,
     outlier_fraction: float = 0.025,
+    normalize_mode: str = "train",
     num_context_examples: int = 1,
     threshold: float = 0.1,
     progress: bool = True,
@@ -121,6 +199,8 @@ def dataset_inference(
         holdout_size: cap on samples used (split equally between regressor train and t-test).
         train_fraction: portion of samples allocated to regressor training; rest goes to t-test.
         outlier_fraction: top/bottom fraction of feature values clipped to mean.
+        normalize_mode: ``"train"`` uses suspect-only stats for z-scoring
+            (paper default); ``"combined"`` uses suspect+validation stats.
         num_context_examples: used only by context-dependent detectors (e.g. CoDeC).
         threshold: p-value threshold for the `trained` verdict.
         progress: show tqdm bars.
@@ -129,6 +209,8 @@ def dataset_inference(
         raise ValueError("At least one detector required.")
     if len(suspect) < 4 or len(validation) < 4:
         raise ValueError("Need at least 4 samples per side for stable A/B splits.")
+    if normalize_mode not in {"train", "combined"}:
+        raise ValueError(f"normalize_mode must be 'train' or 'combined', got {normalize_mode}")
 
     suspect = list(suspect)
     validation = list(validation)
@@ -141,6 +223,7 @@ def dataset_inference(
     )
 
     p_values: list[float] = []
+    p_value_curves: list[list[float]] = []
     weight_accumulator = np.zeros(len(detectors), dtype=float)
 
     for seed in range(n_seeds):
@@ -149,72 +232,69 @@ def dataset_inference(
         val_pool = rng.sample(validation, cap)
 
         n_train = int(cap * train_fraction)
-        sus_train, sus_test = sus_pool[:n_train], sus_pool[n_train:]
-        val_train, val_test = val_pool[:n_train], val_pool[n_train:]
 
-        feats_sus_train = _score_corpus(
+        # Stage 1: score the FULL pool (train + test) so that outlier cleaning
+        # and normalization see the same distribution for both splits.
+        feats_sus = _score_corpus(
             detectors,
             model,
-            sus_train,
-            desc=f"seed {seed} sus-train",
+            sus_pool,
+            desc=f"seed {seed} suspect",
             rng=rng,
             num_context_examples=num_context_examples,
             progress=progress,
         )
-        feats_val_train = _score_corpus(
+        feats_val = _score_corpus(
             detectors,
             model,
-            val_train,
-            desc=f"seed {seed} val-train",
+            val_pool,
+            desc=f"seed {seed} validation",
             rng=rng,
             num_context_examples=num_context_examples,
             progress=progress,
         )
 
-        cleaned_sus = _clean_features(feats_sus_train, fraction=outlier_fraction)
-        cleaned_val = _clean_features(feats_val_train, fraction=outlier_fraction)
-        train_features_raw = np.vstack([cleaned_sus, cleaned_val])
-        train_features = _normalize_columns(train_features_raw)
+        # Stage 2: outlier removal on the FULL scored pool (paper §5.1).
+        cleaned_sus = _clean_features(feats_sus, fraction=outlier_fraction)
+        cleaned_val = _clean_features(feats_val, fraction=outlier_fraction)
+
+        # Split the cleaned features back into train / test.
+        sus_train_clean = cleaned_sus[:n_train]
+        sus_test_clean = cleaned_sus[n_train:]
+        val_train_clean = cleaned_val[:n_train]
+        val_test_clean = cleaned_val[n_train:]
+
+        train_features_raw = np.vstack([sus_train_clean, val_train_clean])
+        train_features = _normalize_columns(
+            train_features_raw,
+            suspect_only=(normalize_mode == "train"),
+            n_suspect=len(sus_train_clean),
+        )
         train_labels = np.concatenate(
             [
-                np.zeros(len(cleaned_sus)),
-                np.ones(len(cleaned_val)),
+                np.zeros(len(sus_train_clean)),
+                np.ones(len(val_train_clean)),
             ]
         )
 
-        regressor = LinearRegression().fit(train_features, train_labels)
-
-        feats_sus_test = _score_corpus(
-            detectors,
-            model,
-            sus_test,
-            desc=f"seed {seed} sus-test",
-            rng=rng,
-            num_context_examples=num_context_examples,
-            progress=progress,
-        )
-        feats_val_test = _score_corpus(
-            detectors,
-            model,
-            val_test,
-            desc=f"seed {seed} val-test",
-            rng=rng,
-            num_context_examples=num_context_examples,
-            progress=progress,
-        )
+        coef, intercept = _train_logistic_regressor(train_features, train_labels)
 
         test_features = _normalize_columns(
-            np.vstack([feats_sus_test, feats_val_test]),
+            np.vstack([sus_test_clean, val_test_clean]),
             ref=train_features_raw,
+            suspect_only=(normalize_mode == "train"),
+            n_suspect=len(sus_train_clean),
         )
-        scores = regressor.predict(test_features)
-        sus_scores = scores[: len(feats_sus_test)]
-        val_scores = scores[len(feats_sus_test) :]
+        scores = test_features @ coef + intercept
+        sus_scores = scores[: len(sus_test_clean)]
+        val_scores = scores[len(sus_test_clean) :]
 
-        p = one_sided_t_test_lower(sus_scores, val_scores)
-        p_values.append(p)
-        weight_accumulator += regressor.coef_
-        logger.debug(f"seed={seed} p={p:.4g}")
+        # Stage 3: t-test at multiple sample sizes (paper §5.1).
+        curve = _p_value_curve(sus_scores, val_scores)
+        p_value_curves.append(curve)
+        p_values.append(curve[-1])
+        weight_accumulator += coef
+        logger.debug(f"seed={seed} p={curve[-1]:.4g}")
 
     p_combined = sidak_combine(p_values)
     weights = {
@@ -229,6 +309,7 @@ def dataset_inference(
         validation_size=len(validation),
         p_values=p_values,
         p_combined=p_combined,
+        p_value_curves=p_value_curves,
         feature_weights=weights,
         metadata={
             "threshold": threshold,
@@ -236,5 +317,6 @@ def dataset_inference(
             "holdout_size": cap,
             "train_fraction": train_fraction,
             "outlier_fraction": outlier_fraction,
+            "normalize_mode": normalize_mode,
         },
     )

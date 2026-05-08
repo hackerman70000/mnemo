@@ -8,6 +8,15 @@ from loguru import logger
 from mnemo.datasets.benchmarks import BENCHMARKS
 from mnemo.datasets.loaders import load_local
 from mnemo.detectors import DETECTOR_REGISTRY
+from mnemo.detectors.perturbation_loss import (
+    PerturbationLoss,
+    butter_fingers,
+    change_char_case,
+    random_word_drop,
+    synonym_substitution,
+    underscore_trick,
+    whitespace_perturbation,
+)
 from mnemo.models.hf import HFModel
 from mnemo.pipelines.auc_eval import evaluate_auc
 from mnemo.pipelines.dataset_inference import dataset_inference
@@ -15,13 +24,92 @@ from mnemo.pipelines.detection import detect_contamination
 
 app = typer.Typer(help="mnemo — LLM training data contamination detection.", no_args_is_help=True)
 
+_PERTURBATION_MAP: dict[str, object | None] = {
+    "swap": None,  # adjacent_word_swap is default, no key needed
+    "drop": random_word_drop,
+    "butter_fingers": butter_fingers,
+    "synonym_substitution": synonym_substitution,
+    "change_char_case": change_char_case,
+    "whitespace_perturbation": whitespace_perturbation,
+    "underscore_trick": underscore_trick,
+}
 
-def _build_detector(name: str) -> object:
-    if name not in DETECTOR_REGISTRY:
+# Non-registry detectors that can be constructed via CLI with parameters
+_EXTRA_DETECTOR_CLASSES: dict[str, type[object]] = {
+    "perturbation_loss": PerturbationLoss,
+}
+
+
+def _coerce_value(v: str) -> object:
+    v_lower = v.lower()
+    if v_lower == "true":
+        return True
+    if v_lower == "false":
+        return False
+    try:
+        return int(v)
+    except ValueError:
+        try:
+            return float(v)
+        except ValueError:
+            return v
+
+
+def _resolve_perturbation_fn(val: str) -> tuple[str, object] | None:
+    """Map CLI ``fn=...`` to ``(param_name, callable)`` or None to skip."""
+    if val not in _PERTURBATION_MAP:
+        raise typer.BadParameter(
+            f"Unknown perturbation fn '{val}'. Available: {', '.join(_PERTURBATION_MAP)}"
+        )
+    fn = _PERTURBATION_MAP[val]
+    if fn is None:
+        return None  # use dataclass default
+    return "perturbation_fn", fn
+
+
+def _build_detector(spec: str) -> object:
+    """Instantiate a detector from a registry name, optionally with kwargs.
+
+    Syntax: ``name`` or ``name:key=val,key2=val2``.
+
+    Examples
+    --------
+    * ``codec``
+    * ``min_k_prob:k_percent=5``
+    * ``perturbation_loss:mode=ratio,fn=butter_fingers``
+    """
+    if ":" in spec:
+        name_part, param_part = spec.split(":", 1)
+    else:
+        name_part, param_part = spec, ""
+
+    name = name_part.strip()
+    cls = DETECTOR_REGISTRY.get(name) or _EXTRA_DETECTOR_CLASSES.get(name)
+    if cls is None:
         raise typer.BadParameter(
             f"Unknown detector '{name}'. Available: {', '.join(DETECTOR_REGISTRY)}"
         )
-    return DETECTOR_REGISTRY[name]()
+
+    kwargs: dict[str, object] = {}
+    for pair in param_part.split(","):
+        if not pair:
+            continue
+        if "=" not in pair:
+            raise typer.BadParameter(f"Invalid parameter '{pair}' in detector spec '{spec}'")
+        k, v_raw = pair.split("=", 1)
+        k, v_raw = k.strip(), v_raw.strip()
+
+        val = _coerce_value(v_raw)
+
+        if name == "perturbation_loss" and k == "fn" and isinstance(val, str):
+            resolved = _resolve_perturbation_fn(val)
+            if resolved is None:
+                continue
+            k, val = resolved
+
+        kwargs[k] = val
+
+    return cls(**kwargs)
 
 
 def _resolve_dataset(spec: str) -> list[str]:
@@ -106,11 +194,18 @@ def di(
         ["vanilla_loss", "perplexity", "min_k_prob", "max_k_prob", "zlib_ratio"],
         "--detector",
         "-d",
-        help="Detectors to aggregate. Pass --detector multiple times.",
+        help="Detectors to aggregate. Pass --detector multiple times. "
+        "Syntax: name or name:k=v,k2=v2 (e.g. min_k_prob:k_percent=5).",
     ),
     n_seeds: int = typer.Option(10, "--seeds"),
     holdout: int = typer.Option(1000, "--holdout"),
     threshold: float = typer.Option(0.1, "--threshold"),
+    normalize_mode: str = typer.Option(
+        "train",
+        "--normalize-mode",
+        help="Feature z-score normalisation: 'train' (suspect-only stats, paper default) "
+        "or 'combined' (suspect+validation stats).",
+    ),
     device: str = typer.Option("auto"),
 ) -> None:
     """Maini-style dataset inference: was the suspect set used for training?"""
@@ -127,6 +222,7 @@ def di(
         n_seeds=n_seeds,
         holdout_size=holdout,
         threshold=threshold,
+        normalize_mode=normalize_mode,
     )
     verdict = "TRAINED" if result.trained else "NOT trained"
     typer.secho(
